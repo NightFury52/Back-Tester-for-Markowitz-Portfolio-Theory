@@ -5,4 +5,5 @@ The algorithm has a Risk Aversion Parameter, higher value of which determines th
 The Back-tester creates a log file, which contains the data of each an every period trade commenced and their retuens. Running the Algorithm in any IDE will create an interactive plotly graph of Portfolio
 Capital accumulated over time, along with capital accumulated had we invested in the stocks comprising the portfolio individually. Below is a static image of the Capital gains plot.
 
-![Capital accumulation time series](https://github.com/user-attachments/assets/72d96a56-c085-491f-803e-bcfaa1a44dc7)
+
+![Cap Gain](https://github.com/user-attachments/assets/01578061-efc5-4d47-a003-6b72d50551c7)
