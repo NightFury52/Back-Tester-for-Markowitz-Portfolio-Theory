@@ -6,43 +6,43 @@ import pandas as pd
 import numpy as np
 
 class Simulation():
-    def __init__(self, tickers_list: list, simulation_period: int, start_date: str, end_date: str):
-        self.tickers_list = tickers_list
+    def __init__(self, n_assets: int, simulation_period: int, start_date: str, end_date: str):
         self.simulation_period = simulation_period
         self.start_date = start_date
         self.end_date = end_date
         self.stock_data = {'Price': pd.DataFrame(), 'Return': pd.DataFrame()}
+        self.n_assets = n_assets
         self.sim_capital = {}
         self.sim_dates = []
         self.log = None
         
-    def gather_data(self):
-        for ticker in self.tickers_list:
-            data = yf.Ticker(ticker).history(interval = '1d', start = self.start_date, end = self.end_date)
-            self.stock_data['Price'][ticker] = data['Open']
-            self.stock_data['Return'][ticker] = (data['Close']) / (data['Open'])
+    def gather_data(self, start_date, end_date):
+        self.stock_data['Price'] = pd.read_csv('Data/stock_price_data.csv', index_col = 0)
+        self.stock_data['Price'] = self.stock_data['Price'].loc[start_date : end_date]
+        self.stock_data['Return'] = pd.read_csv('Data/stock_returns_data.csv', index_col = 0)
+        self.stock_data['Return'] = self.stock_data['Return'].loc[start_date : end_date]
         
         self.stock_data['Price'].sort_index(inplace = True, ascending = False)
         self.stock_data['Return'].sort_index(inplace = True, ascending = False)
     
     def run_simulation(self, capital = 100):
         # Gathering historical data
-        self.gather_data()
+        self.gather_data(self.start_date, self.end_date)
         
         # we can't update self.sim_capital rn, so we take a temporary variable
         capital_dict = {'Portfolio': capital}
         self.sim_capital = {'Portfolio': []}
         
         log_dict = {}
-        for ticker in self.tickers_list:
-            capital_dict[ticker] = 100
-            self.sim_capital[ticker] = []
-            log_dict[f'{ticker} Capital assigned'] = []
-            log_dict[f'{ticker} Return'] = []
-            log_dict[f'{ticker} Capital Return'] = []
-            log_dict[f'{ticker} Gain'] = []
-        log_dict[f'Portfolio Price'] = []
+        for idx in range(1, self.n_assets + 1):
+            log_dict[f'{idx} ticker'] = []
+            log_dict[f'{idx} Cap ass.'] = []
+            log_dict[f'{idx} Return'] = []
+            log_dict[f'{idx} Cap Return'] = []
+            log_dict[f'{idx} Cap Gain'] = []
+        log_dict[f'Portfolio Cap'] = []
         log_dict[f'Portfolio Return'] = []
+        log_dict[f'Portfolio Gain'] = []
 
         # Initiating the Log File
         self.log = pd.DataFrame(log_dict)
@@ -51,33 +51,43 @@ class Simulation():
             # current period
             row_no = (self.simulation_period - 1 - i)
             date = str(self.stock_data['Price'].iloc[row_no].name)
-            stock_prices = self.stock_data['Price'].iloc[row_no].values
-            returns = self.stock_data['Return'].iloc[row_no]
+            
+            returns_data = self.stock_data['Return'].iloc[(row_no + 1):(row_no + 1 + 100)]
+            assets = self.select_assets(self.n_assets, returns_data)
+            # print(assets)
+            returns_data = returns_data[assets]
+            
+            stock_prices = self.stock_data['Price'].iloc[row_no][assets].values
+            returns = self.stock_data['Return'].iloc[row_no][assets].values
             
             # cap_dist is given by the model (proportion of total capital assigned in each stock)
-            cap_dist = self.Markowitz_Model(self.stock_data['Return'].iloc[row_no:(row_no + 30)], 5)
+            cap_dist = self.Markowitz_Model(returns_data, 30)
+            # print(cap_dist)
             
             # Which stock, how many we're buying
             weights = (capital_dict['Portfolio'])* (cap_dist / stock_prices)
             
             # stores the log for one period
             log_list = []
-            for ticker, cap_prop, return_value in zip(self.tickers_list, list(cap_dist), list(returns)):
+            for ticker, cap_prop, return_value in zip(assets, list(cap_dist), list(returns)):
                 cap_assigned = cap_prop*capital_dict['Portfolio']
+                log_list.append(ticker)
                 log_list.append(cap_assigned)
                 log_list.append(return_value)
                 log_list.append(return_value*cap_assigned)
                 log_list.append((return_value-1)*cap_assigned)
             
             # updating capital from individual stocks
-            for ticker in self.tickers_list:
-                capital_dict[ticker] = capital_dict[ticker] * returns.loc[ticker]
-            returns = returns.values
+            # for ticker in assets:
+            #     capital_dict[ticker] = capital_dict[ticker] * returns.loc[ticker]
+            # returns = returns.values
             
             # updating portfolio capital
             log_list.append(capital_dict['Portfolio'])
-            capital_dict['Portfolio'] = capital_dict['Portfolio']*np.dot(cap_dist, returns)
-            log_list.append(capital_dict['Portfolio'])
+            new_capital = capital_dict['Portfolio']*np.dot(cap_dist, returns)
+            log_list.append(new_capital)
+            log_list.append(new_capital - capital_dict['Portfolio'])
+            capital_dict['Portfolio'] = new_capital
             
             # updating the log DataFram
             self.log.loc[date] = log_list
@@ -96,7 +106,15 @@ class Simulation():
         # Plotting the Capital Time-Series
         self.plot_sim_capital(self.sim_capital, self.sim_dates)
     
-    def plot_sim_capital(self, capital_data_dict, dates_list):
+    def select_assets(self, n_assets: int, returns_data: pd.DataFrame):
+        sd = np.sqrt(np.diag(returns_data.cov()))
+        mu = returns_data.mean(axis = 0)
+        efficiency = (mu / sd)
+        efficiency.sort_values(ascending = False, inplace = True)
+        best_stocks = list(efficiency.index[:n_assets])
+        return best_stocks
+    
+    def plot_sim_capital(self, capital_data_dict: dict, dates_list: list):
         fig = go.Figure()
         
         for stock, capital_data in capital_data_dict.items():
@@ -111,9 +129,9 @@ class Simulation():
         fig.write_html('Returns Plot.html', full_html = True)
         fig.show()
     
-    def Markowitz_Model(self, train_data: pd.DataFrame, rap:float):
+    def Markowitz_Model(self, train_data: pd.DataFrame, rap: float):
         d = len(train_data.columns)
-        mu = train_data.mean().values
+        mu = train_data.mean(axis = 0).values
         cov_mat = train_data.cov().values
         
         constraints = [{'type': 'ineq', 'fun': lambda x: x},
@@ -133,6 +151,5 @@ class Simulation():
         L = np.dot(weight, mu) - (rap/2)*np.dot(weight, np.dot(cov_mat, weight))
         return (-L)
 
-tickers_list = ['BX', 'SPY', 'MSFT', 'V']
-simulation = Simulation(tickers_list, 365, '2018-01-01', '2020-01-01')
+simulation = Simulation(30, 250, '2014-01-01', '2018-01-01')
 simulation.run_simulation()
